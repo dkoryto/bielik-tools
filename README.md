@@ -38,9 +38,30 @@ Choose the tool parser file matching your vLLM version:
 | 0.13.0 – 0.14.x | `bielik_vllm_tool_parser_v0.13.0.py` | `bielik_vllm_reasoning_parser_v0.13.0.py` |
 | ≤ 0.12.0 | `bielik_vllm_tool_parser_v0.12.0.py` | — |
 
-The 0.24.0 tool-parser cut is the vLLM `ToolParser` API change
-(`__init__(tokenizer, tools=…)` plus `supports_required_and_named`).
-Reasoning parsers are unchanged across 0.15+.
+All tool parser files share one implementation, `bielik_vllm_tool_parser.py`,
+which resolves vLLM imports and the `ToolParser` constructor signature at load
+time. The versioned files are thin wrappers kept for backwards compatibility;
+they must stay in the same directory as `bielik_vllm_tool_parser.py`. They
+differ only in how `tool_choice="required"` is handled:
+
+* `bielik_vllm_tool_parser.py` and `_v0.15.0.py` redirect it to `auto` and
+  force a `<tool_call>` block with a guided regex;
+* `_v0.13.0.py` and `_v0.12.0.py` leave it to vLLM's built-in handling, as
+  before.
+
+The same applies to the reasoning parsers: `bielik_vllm_reasoning_parser.py`
+holds the implementation and `_v0.13.0.py` is a wrapper with identical
+behaviour.
+
+For the Bielik v3.1 chat template use `bielik_vllm_tool_parser_v3.1.py` and
+`bielik_vllm_reasoning_parser_v3.1.py` (vLLM ≥ 0.24). They allow free text
+around tool calls when `tool_choice="required"` and enable thinking via
+`reasoning_effort` in `chat_template_kwargs`. Load only one Bielik tool parser
+and one reasoning parser plugin per server — all of them register as `bielik`.
+
+The unit tests (see [Tests](#tests)) run against vLLM 0.25.1; older vLLM
+versions are handled by import fallbacks but are not covered by automated
+tests.
 
 Then, run [tool\_calling.py](https://github.com/speakleash/bielik-tools/blob/main/examples/tool_calling.py) or [tool\_calling\_streaming.py](https://github.com/speakleash/bielik-tools/blob/main/examples/tool_calling_streaming.py) to see how tool calling works in practice.
 
@@ -59,7 +80,7 @@ Then, run [reasoning\_streaming.py](https://github.com/speakleash/bielik-tools/b
 
 ## Tests
 
-Unit tests for the tool parser live in `tests/`. They import vLLM, so run them in an environment where vLLM (>= 0.24) is installed; no GPU or model download is needed (a fake tokenizer is used):
+Unit tests for the parsers live in `tests/`. They exercise every tool parser file, load each tool and reasoning parser file the way vLLM does (`--tool-parser-plugin` / `--reasoning-parser-plugin`) and import vLLM, so run them in an environment where vLLM (>= 0.24) is installed; no GPU or model download is needed (a fake tokenizer is used):
 
 ```bash
 pip install pytest
