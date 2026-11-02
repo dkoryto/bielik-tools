@@ -9,11 +9,14 @@ from pathlib import Path
 
 import pytest
 
-pytest.importorskip("vllm")
-
-from vllm.entrypoints.openai.chat_completion.protocol import (  # noqa: E402
-    ChatCompletionRequest,
-)
+try:
+    from vllm.entrypoints.openai.chat_completion.protocol import (
+        ChatCompletionRequest,
+    )
+except ImportError:
+    # vLLM is optional: skip only the parser tests, keep other tests runnable.
+    ChatCompletionRequest = None
+    collect_ignore = ["test_bielik_vllm_tool_parser.py", "test_plugin_loading.py"]
 
 TOOLS_DIR = Path(__file__).resolve().parent.parent / "tools"
 
