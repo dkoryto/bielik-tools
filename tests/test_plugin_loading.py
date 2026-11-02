@@ -15,7 +15,7 @@ from vllm.tool_parsers.abstract_tool_parser import ToolParserManager
 
 TOOL_PARSER_CLASSES = {
     "default": "BielikToolParser",
-    "builtin": "BielikPre015ToolParser",
+    "builtin": "BielikV012ToolParser",
     "v3.1": "BielikV31ToolParser",
 }
 

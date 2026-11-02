@@ -14,7 +14,7 @@ across vLLM versions through a small compatibility layer:
 The versioned files next to this one (``bielik_vllm_tool_parser_v*.py``) are
 thin shims kept for backwards compatibility. They load this file and register
 the variant that matches their historical behaviour (see
-``BielikPre015ToolParser`` and ``BielikV31ToolParser`` below).
+``BielikV012ToolParser`` and ``BielikV31ToolParser`` below).
 
 The parser is registered under the name ``bielik``.
 """
@@ -455,10 +455,10 @@ class BielikToolParser(ToolParser):
 # Variants kept for the versioned plugin files
 # --------------------------------------------------------------------------
 
-class BielikPre015ToolParser(BielikToolParser):
-    """Behaviour of ``bielik_vllm_tool_parser_v0.12.0.py`` / ``_v0.13.0.py``.
+class BielikV012ToolParser(BielikToolParser):
+    """Behaviour of ``bielik_vllm_tool_parser_v0.12.0.py``.
 
-    Those files predate the ``tool_choice="required"`` redirect and leave
+    That file predates the ``tool_choice="required"`` redirect and leaves
     "required" to vLLM's built-in handling.
     """
 

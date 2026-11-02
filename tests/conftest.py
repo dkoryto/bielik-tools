@@ -64,7 +64,7 @@ def _load_module(filename):
 TOOL_PARSER_FILES = {
     "bielik_vllm_tool_parser.py": "default",
     "bielik_vllm_tool_parser_v0.15.0.py": "default",
-    "bielik_vllm_tool_parser_v0.13.0.py": "builtin",
+    "bielik_vllm_tool_parser_v0.13.0.py": "default",
     "bielik_vllm_tool_parser_v0.12.0.py": "builtin",
     "bielik_vllm_tool_parser_v3.1.py": "v3.1",
 }

@@ -44,10 +44,10 @@ time. The versioned files are thin wrappers kept for backwards compatibility;
 they must stay in the same directory as `bielik_vllm_tool_parser.py`. They
 differ only in how `tool_choice="required"` is handled:
 
-* `bielik_vllm_tool_parser.py` and `_v0.15.0.py` redirect it to `auto` and
-  force a `<tool_call>` block with a guided regex;
-* `_v0.13.0.py` and `_v0.12.0.py` leave it to vLLM's built-in handling, as
-  before.
+* `bielik_vllm_tool_parser.py`, `_v0.15.0.py` and `_v0.13.0.py` redirect it
+  to `auto` and force a `<tool_call>` block with a guided regex;
+* `_v3.1.py` does the same with a more permissive regex (text around calls);
+* `_v0.12.0.py` leaves it to vLLM's built-in handling, as before.
 
 The same applies to the reasoning parsers: `bielik_vllm_reasoning_parser.py`
 holds the implementation and `_v0.13.0.py` is a wrapper with identical

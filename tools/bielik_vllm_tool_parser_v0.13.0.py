@@ -1,9 +1,9 @@
 """Bielik tool parser plugin for vLLM 0.13.0 - 0.14.x (compatibility shim).
 
 The implementation lives in bielik_vllm_tool_parser.py (same directory);
-this file loads it by path and registers ``BielikPre015ToolParser`` as ``bielik``.
-Keeps this file's historical behaviour: tool_choice="required" is left to
-vLLM's built-in handling (no guided-regex redirect).
+this file loads it by path and registers ``BielikToolParser`` as ``bielik``.
+Keeps this file's historical behaviour: tool_choice="required" is redirected
+to "auto" with a guided regex, as in the default parser.
 """
 import importlib.util
 import sys
@@ -38,4 +38,4 @@ def _load_shared():
 
 _shared = _load_shared()
 
-BielikToolParser = _shared.register_tool_parser(_shared.BielikPre015ToolParser)
+BielikToolParser = _shared.register_tool_parser(_shared.BielikToolParser)
