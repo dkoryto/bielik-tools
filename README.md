@@ -13,6 +13,32 @@ cd bielik-tools
 
 Explore available tools and examples in their respective subdirectories.
 
+## Install as a package
+
+The parsers can also be installed as a vLLM plugin into the same environment as vLLM
+(vLLM itself is not installed by this package):
+
+```bash
+pip install git+https://github.com/speakleash/bielik-tools
+```
+
+The plugin registers the `bielik` tool and reasoning parsers automatically and picks the
+parser files matching the installed vLLM version (see the table below), so no
+`--tool-parser-plugin` / `--reasoning-parser-plugin` paths are needed. The advanced chat
+template ships with the package:
+
+```bash
+vllm serve speakleash/Bielik-11B-v3.0-Instruct \
+    --enable-auto-tool-choice \
+    --tool-call-parser bielik \
+    --reasoning-parser bielik \
+    --chat-template "$(python -m bielik_tools template-path)"
+```
+
+`python -m bielik_tools info` shows the detected vLLM version and the selected parser files.
+Passing `--tool-parser-plugin` / `--reasoning-parser-plugin` explicitly still works and takes
+precedence over the packaged parsers.
+
 ## Structured Outputs
 
 Bielik models have been trained to generate structured outputs. Once the model is running in [vLLM](https://github.com/vllm-project/vllm), you can try the [structured_output.py](https://github.com/speakleash/bielik-tools/blob/main/examples/structured_output.py) example to generate structured outputs using OpenAI's [Completions](https://platform.openai.com/docs/api-reference/completions) and [Chat](https://platform.openai.com/docs/api-reference/chat) APIs.
