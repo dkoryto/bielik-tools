@@ -56,9 +56,33 @@ def _load_module(filename):
     return module
 
 
+# Every tool parser plugin file users may pass to --tool-parser-plugin, with
+# the tool_choice="required" behaviour it is expected to keep:
+#   "default" - redirect to "auto" + guided regex (single <tool_call> block)
+#   "v3.1"    - redirect to "auto" + permissive v3.1 regex
+#   "builtin" - leave "required" to vLLM's built-in handling
+TOOL_PARSER_FILES = {
+    "bielik_vllm_tool_parser.py": "default",
+    "bielik_vllm_tool_parser_v0.15.0.py": "default",
+    "bielik_vllm_tool_parser_v0.13.0.py": "builtin",
+    "bielik_vllm_tool_parser_v0.12.0.py": "builtin",
+    "bielik_vllm_tool_parser_v3.1.py": "v3.1",
+}
+
+
+@pytest.fixture(scope="session", params=list(TOOL_PARSER_FILES))
+def tool_parser_file(request):
+    return request.param
+
+
 @pytest.fixture(scope="session")
-def tool_parser_module():
-    return _load_module("bielik_vllm_tool_parser.py")
+def required_mode(tool_parser_file):
+    return TOOL_PARSER_FILES[tool_parser_file]
+
+
+@pytest.fixture(scope="session")
+def tool_parser_module(tool_parser_file):
+    return _load_module(tool_parser_file)
 
 
 @pytest.fixture

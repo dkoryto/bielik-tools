@@ -1,4 +1,8 @@
-"""Unit tests for tools/bielik_vllm_tool_parser.py (vLLM >= 0.24)."""
+"""Unit tests for the Bielik vLLM tool parser.
+
+Run against tools/bielik_vllm_tool_parser.py and every versioned shim file
+(see TOOL_PARSER_FILES in conftest.py).
+"""
 import json
 import re
 
@@ -61,7 +65,9 @@ class TestAdjustRequest:
         assert request.skip_special_tokens is True
         assert request.structured_outputs is None
 
-    def test_required_redirects_to_auto_with_regex(self, parser, make_request):
+    def test_required_redirects_to_auto_with_regex(self, parser, make_request, required_mode):
+        if required_mode == "builtin":
+            pytest.skip("variant leaves tool_choice='required' to vLLM")
         # Issue #9: vLLM's built-in "required" path expects a raw JSON array.
         request = parser.adjust_request(make_request(tool_choice="required"))
         assert request.tool_choice == "auto"
@@ -70,13 +76,24 @@ class TestAdjustRequest:
         assert request.structured_outputs is not None
         assert request.structured_outputs.regex
 
+    def test_required_left_to_vllm(self, parser, make_request, required_mode):
+        if required_mode != "builtin":
+            pytest.skip("variant redirects tool_choice='required'")
+        request = parser.adjust_request(make_request(tool_choice="required"))
+        assert request.tool_choice == "required"
+        assert request.skip_special_tokens is False
+        assert request.structured_outputs is None
+
     @pytest.mark.parametrize("output", [
         '<tool_call>{"name": "get_weather", "arguments": {"city": "Kraków"}}</tool_call>',
         '<tool_call> {"name": "get_weather", "arguments": {}}</tool_call>',
         '<think>Użytkownik pyta o pogodę.</think>\n'
         '<tool_call>{"name": "get_weather", "arguments": {"city": "Gdańsk"}}</tool_call>',
     ])
-    def test_required_regex_accepts_tool_call_output(self, parser, make_request, output):
+    def test_required_regex_accepts_tool_call_output(self, parser, make_request, output,
+                                                     required_mode):
+        if required_mode == "builtin":
+            pytest.skip("variant leaves tool_choice='required' to vLLM")
         regex = parser.adjust_request(make_request(tool_choice="required")).structured_outputs.regex
         assert re.fullmatch(regex, output)
 
@@ -85,9 +102,26 @@ class TestAdjustRequest:
         '{"name": "get_weather", "arguments": {}}',
         "<think>Myślę.</think>Odpowiedź bez narzędzia.",
     ])
-    def test_required_regex_rejects_plain_answers(self, parser, make_request, output):
+    def test_required_regex_rejects_plain_answers(self, parser, make_request, output,
+                                                  required_mode):
+        if required_mode == "builtin":
+            pytest.skip("variant leaves tool_choice='required' to vLLM")
         regex = parser.adjust_request(make_request(tool_choice="required")).structured_outputs.regex
         assert re.fullmatch(regex, output) is None
+
+    @pytest.mark.parametrize("output", [
+        'Sprawdzę pogodę. <tool_call>{"name": "get_weather", "arguments": {}}</tool_call>',
+        '<tool_call>{"name": "get_weather", "arguments": {}}</tool_call>\n'
+        '<tool_call>{"name": "get_time", "arguments": {}}</tool_call> Gotowe.',
+    ])
+    def test_required_regex_text_around_calls(self, parser, make_request, output,
+                                              required_mode):
+        # The v3.1 template variant allows free text around the tool calls;
+        # the default variant does not.
+        if required_mode == "builtin":
+            pytest.skip("variant leaves tool_choice='required' to vLLM")
+        regex = parser.adjust_request(make_request(tool_choice="required")).structured_outputs.regex
+        assert bool(re.fullmatch(regex, output)) is (required_mode == "v3.1")
 
 
 # --------------------------------------------------------------------------

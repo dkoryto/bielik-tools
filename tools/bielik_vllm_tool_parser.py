@@ -1,43 +1,133 @@
-"""Tool parser for Bielik models on vLLM >= 0.24.0.
+"""Tool parser for Bielik models, usable as a vLLM ``--tool-parser-plugin``.
 
-Compatible with ToolParser.__init__(tokenizer, tools=...) and sets
-supports_required_and_named=False so tag-wrapped <tool_call> output uses
-extract_tool_calls / adjust_request instead of vLLM's JSON required path.
+This file holds the single implementation of the Bielik tool parser. It is
+self-contained (it can be copied and passed to vLLM on its own) and works
+across vLLM versions through a small compatibility layer:
 
-For vLLM 0.15.0–0.23.x use bielik_vllm_tool_parser_v0.15.0.py.
+* imports are resolved from the newest known module location first, falling
+  back to older locations only when that specific module is missing;
+* ``__init__`` accepts ``(tokenizer, *args, **kwargs)`` and forwards them to
+  ``ToolParser``: vLLM >= 0.24 passes ``tools``, older versions do not;
+* ``tool_choice="required"`` is redirected to a guided regex only when the
+  installed vLLM provides ``StructuredOutputsParams``.
+
+The versioned files next to this one (``bielik_vllm_tool_parser_v*.py``) are
+thin shims kept for backwards compatibility. They load this file and register
+the variant that matches their historical behaviour (see
+``BielikPre015ToolParser`` and ``BielikV31ToolParser`` below).
+
+The parser is registered under the name ``bielik``.
 """
+import importlib
 import json
 import re
-from typing import Union, Sequence
+from typing import TYPE_CHECKING, Any, Optional, Sequence, Union
 
 import partial_json_parser
 from partial_json_parser.core.options import Allow
 
-from vllm.entrypoints.openai.chat_completion.protocol import (
-    ChatCompletionRequest,
-)
-from vllm.entrypoints.openai.engine.protocol import (
-    DeltaFunctionCall, DeltaMessage, DeltaToolCall,
-    ExtractedToolCallInformation, FunctionCall, ToolCall,
-)
 from vllm.logger import init_logger
-from vllm.sampling_params import StructuredOutputsParams
-from vllm.tokenizers import TokenizerLike
-from vllm.tokenizers.mistral import MistralTokenizer
-from vllm.tool_parsers.abstract_tool_parser import Tool, ToolParser, ToolParserManager
 from vllm.utils import random_uuid
+
+if TYPE_CHECKING:
+    from vllm.tokenizers import TokenizerLike
 
 logger = init_logger(__name__)
 
+# Module name used by the versioned shims when they load this file. When
+# loaded under this name the module only defines the parser classes and
+# leaves registration to the shim, so "bielik" is registered exactly once.
+SHARED_MODULE_NAME = "_bielik_vllm_tool_parser_shared"
 
-@ToolParserManager.register_module("bielik")
+
+# --------------------------------------------------------------------------
+# vLLM compatibility layer
+# --------------------------------------------------------------------------
+
+class _CompatImportError(ImportError):
+    """None of the candidate modules provides the requested names."""
+
+
+def _import_from(candidates: Sequence[str], *names: str) -> tuple:
+    """Import ``names`` from the first module in ``candidates`` providing them.
+
+    Candidates are tried newest-first. A candidate is skipped only when the
+    candidate module itself (or one of its parent packages) does not exist,
+    or when it lacks one of the names; any other import failure (e.g. a
+    missing third-party dependency inside vLLM) is re-raised unchanged.
+    """
+    last_error: Optional[BaseException] = None
+    for module_name in candidates:
+        try:
+            module = importlib.import_module(module_name)
+        except ModuleNotFoundError as exc:
+            missing = exc.name or ""
+            if not missing or not (module_name == missing
+                                   or module_name.startswith(missing + ".")):
+                raise
+            last_error = exc
+            continue
+        if all(hasattr(module, name) for name in names):
+            return tuple(getattr(module, name) for name in names)
+    raise _CompatImportError(
+        f"Could not import {', '.join(names)} from any of: "
+        f"{', '.join(candidates)}") from last_error
+
+
+# Moved from vllm.entrypoints.openai.tool_parsers in vLLM 0.13.
+ToolParser, ToolParserManager = _import_from(
+    ("vllm.tool_parsers.abstract_tool_parser",
+     "vllm.entrypoints.openai.tool_parsers.abstract_tool_parser"),
+    "ToolParser", "ToolParserManager")
+
+# vllm.entrypoints.openai.protocol was split up in vLLM 0.15; newer
+# versions move the shared response types to vllm.entrypoints.generate.
+(ChatCompletionRequest,) = _import_from(
+    ("vllm.entrypoints.openai.chat_completion.protocol",
+     "vllm.entrypoints.openai.protocol"),
+    "ChatCompletionRequest")
+(DeltaFunctionCall, DeltaMessage, DeltaToolCall, ExtractedToolCallInformation,
+ FunctionCall, ToolCall) = _import_from(
+    ("vllm.entrypoints.generate.base.protocol",
+     "vllm.entrypoints.openai.engine.protocol",
+     "vllm.entrypoints.openai.protocol"),
+    "DeltaFunctionCall", "DeltaMessage", "DeltaToolCall",
+    "ExtractedToolCallInformation", "FunctionCall", "ToolCall")
+
+# Moved from vllm.transformers_utils.tokenizer in vLLM 0.13.
+(MistralTokenizer,) = _import_from(
+    ("vllm.tokenizers.mistral", "vllm.transformers_utils.tokenizer"),
+    "MistralTokenizer")
+
+# Optional: only needed for the tool_choice="required" redirect.
+try:
+    (StructuredOutputsParams,) = _import_from(
+        ("vllm.sampling_params",), "StructuredOutputsParams")
+except _CompatImportError:
+    StructuredOutputsParams = None
+
+
+# --------------------------------------------------------------------------
+# Parser
+# --------------------------------------------------------------------------
+
 class BielikToolParser(ToolParser):
+    """Parser for ``<tool_call>{...}</tool_call>`` output of Bielik models."""
+
     # Tag-wrapped tool calls are incompatible with vLLM's default JSON
     # "required"/named guided path — use extract_tool_calls (+ adjust_request).
+    # Only read by vLLM >= 0.24; harmless on older versions.
     supports_required_and_named: bool = False
 
-    def __init__(self, tokenizer: TokenizerLike, tools: list[Tool] | None = None):
-        super().__init__(tokenizer, tools)
+    # Regex enforced through structured outputs when tool_choice="required"
+    # (the request is redirected to "auto" so the tag-aware parser handles
+    # the output). ``None`` leaves "required" to vLLM's built-in handling.
+    required_tool_call_regex: Optional[str] = (
+        r"(<think>[^<]*</think>\s*)?(<tool_call>[^<]+</tool_call>)")
+
+    def __init__(self, tokenizer: "TokenizerLike", *args: Any, **kwargs: Any):
+        # vLLM >= 0.24 passes ``tools``; older versions only the tokenizer.
+        super().__init__(tokenizer, *args, **kwargs)
 
         if isinstance(self.model_tokenizer, MistralTokenizer):
             logger.warning("Detected Mistral tokenizer when using a Bielik model")
@@ -61,12 +151,17 @@ class BielikToolParser(ToolParser):
         if self.tool_call_start_token_id is None or self.tool_call_end_token_id is None:
             raise RuntimeError("Bielik Tool parser could not locate tool call start/end tokens in the tokenizer!")
 
+    def _can_redirect_required(self, request: ChatCompletionRequest) -> bool:
+        return (self.required_tool_call_regex is not None
+                and StructuredOutputsParams is not None
+                and hasattr(request, "structured_outputs"))
+
     def adjust_request(self, request: ChatCompletionRequest) -> ChatCompletionRequest:
         if request.tools and request.tool_choice != 'none':
             # do not skip special tokens because Bielik uses the special tokens
             # to indicated the start and end of the tool calls information.
             request.skip_special_tokens = False
-            if request.tool_choice == "required":
+            if request.tool_choice == "required" and self._can_redirect_required(request):
                 # Bielik wraps tool calls in <tool_call>…</tool_call> tags
                 # which is incompatible with vLLM's built-in "required"
                 # handler (expects a raw JSON array).  Redirect to the
@@ -80,7 +175,7 @@ class BielikToolParser(ToolParser):
                 request.tool_choice = "auto"
                 request.response_format = None
                 request.structured_outputs = StructuredOutputsParams(
-                    regex=r"(<think>[^<]*</think>\s*)?(<tool_call>[^<]+</tool_call>)"
+                    regex=self.required_tool_call_regex
                 )
         return request
 
@@ -354,3 +449,39 @@ class BielikToolParser(ToolParser):
         except Exception:
             logger.exception("Error trying to handle streaming tool call.")
             return None  # do not stream a delta. skip this token ID.
+
+
+# --------------------------------------------------------------------------
+# Variants kept for the versioned plugin files
+# --------------------------------------------------------------------------
+
+class BielikPre015ToolParser(BielikToolParser):
+    """Behaviour of ``bielik_vllm_tool_parser_v0.12.0.py`` / ``_v0.13.0.py``.
+
+    Those files predate the ``tool_choice="required"`` redirect and leave
+    "required" to vLLM's built-in handling.
+    """
+
+    required_tool_call_regex: Optional[str] = None
+
+
+class BielikV31ToolParser(BielikToolParser):
+    """Behaviour of ``bielik_vllm_tool_parser_v3.1.py`` (v3.1 chat template).
+
+    Uses a more permissive regex for ``tool_choice="required"``: free text
+    is allowed before, between and after the tool calls, as long as at least
+    one ``<tool_call>`` block is produced. The regex has no look-around
+    (unsupported by xgrammar/outlines).
+    """
+
+    required_tool_call_regex: Optional[str] = (
+        r"[\s\S]*?(?:<tool_call>[\s\S]*?</tool_call>\s*)+[\s\S]*")
+
+
+def register_tool_parser(parser_cls: type, name: str = "bielik") -> type:
+    """Register ``parser_cls`` with vLLM under ``name``."""
+    return ToolParserManager.register_module(name)(parser_cls)
+
+
+if __name__ != SHARED_MODULE_NAME:
+    register_tool_parser(BielikToolParser)
